@@ -1,7 +1,7 @@
 """
 Scraper de guide de taille
-Supporte : Prada, Kleman
-Usage : python scraper_guide_taille.py <URL>
+Supporte : Prada, Kleman, La Bottega Gardiane
+Usage : python scraper_guide_taille.py <URL> [Homme|Femme]
 """
 
 import sys
@@ -37,7 +37,7 @@ def accepter_cookies(page):
     return False
 
 # ─────────────────────────────────────────────
-# Scraper Prada
+# Scraper PRADA
 # ─────────────────────────────────────────────
 def lire_tableau_prada(page):
     data = {}
@@ -59,11 +59,9 @@ def scraper_guide_prada(page):
     except Exception:
         print("  Bouton guide introuvable")
         return [], None
-
     try:
         page.wait_for_selector("table.size-table__table", timeout=8000)
     except Exception:
-        print("  Tableau pas trouve")
         return [], None
 
     print("  Lecture EU...")
@@ -97,47 +95,37 @@ def scraper_guide_prada(page):
             "taille_eu":     eu[i]            if i < len(eu)            else None,
             "taille_uk":     uk[i]            if i < len(uk)            else None,
             "taille_us":     us[i]            if i < len(us)            else None,
+            "taille_it":     None,
             "longueur_cm":   cm[i]            if i < len(cm)            else None,
         })
     return lignes, "Prada"
 
 # ─────────────────────────────────────────────
-# Scraper Kleman
+# Scraper KLEMAN
 # ─────────────────────────────────────────────
 def scraper_guide_kleman(page, gender="Homme"):
     print("  Ouverture du guide de taille Kleman...")
-
-    # Cliquer sur "Sélectionner une taille"
     try:
         page.click("text=Sélectionner une taille", timeout=8000)
         time.sleep(2)
     except Exception:
         pass
-
-    # Cliquer sur "Guide des tailles"
     try:
         page.click("text=Guide des tailles", timeout=8000)
         time.sleep(2)
-        print("  Guide des tailles ouvert !")
     except Exception:
         print("  Lien Guide des tailles introuvable")
         return [], None
-
-    # Attendre le tableau
     try:
         page.wait_for_selector(".size-guide-table__content__row", timeout=8000)
     except Exception:
-        print("  Tableau Kleman pas trouve")
         return [], None
 
-    # Choisir le bon tableau selon le gender
     titre_tableau = "Pointures Homme" if gender == "Homme" else "Pointures Femmes"
     print(f"  Lecture tableau : {titre_tableau}")
 
-    # Trouver tous les tableaux
     tableaux = page.query_selector_all(".size-guide-table")
     tableau_cible = None
-
     for tableau in tableaux:
         try:
             titre_el = tableau.evaluate_handle("el => el.previousElementSibling")
@@ -147,35 +135,29 @@ def scraper_guide_kleman(page, gender="Homme"):
                 break
         except Exception:
             continue
-
     if not tableau_cible and tableaux:
         tableau_cible = tableaux[0]
-
     if not tableau_cible:
         return [], None
 
-    # Extraire les lignes
     lignes_html = tableau_cible.query_selector_all(".size-guide-table__content__row")
     lignes = []
-
-    for row in lignes_html[1:]:  # skip header
+    for row in lignes_html[1:]:
         items = row.query_selector_all(".size-guide-table__content__item")
         valeurs = []
         for item in items:
             style = item.get_attribute("style") or ""
             x_show = item.get_attribute("x-show") or ""
-            if "display: none" in style:
-                continue
-            if "Pouces" in x_show:
+            if "display: none" in style or "Pouces" in x_show:
                 continue
             valeurs.append(item.inner_text().strip())
-
         if len(valeurs) >= 4:
             lignes.append({
                 "taille_marque": valeurs[0],
                 "taille_eu":     valeurs[0],
                 "taille_uk":     valeurs[1],
                 "taille_us":     valeurs[2],
+                "taille_it":     None,
                 "longueur_cm":   valeurs[3],
             })
         elif len(valeurs) == 3:
@@ -184,10 +166,98 @@ def scraper_guide_kleman(page, gender="Homme"):
                 "taille_eu":     valeurs[0],
                 "taille_uk":     valeurs[1],
                 "taille_us":     valeurs[2],
+                "taille_it":     None,
                 "longueur_cm":   None,
             })
-
     return lignes, "Kleman"
+
+# ─────────────────────────────────────────────
+# Scraper LA BOTTEGA GARDIANE
+# ─────────────────────────────────────────────
+def scraper_guide_gardiane(page, gender="Homme"):
+    print("  Ouverture du guide de taille La Bottega Gardiane...")
+    try:
+        page.click("[data-trigger-size-guide]", timeout=10000)
+        time.sleep(3)
+        print("  Guide ouvert !")
+    except Exception:
+        print("  Bouton guide introuvable")
+        return [], None
+
+    try:
+        page.wait_for_selector(".size-guide__table-right-col", timeout=8000)
+    except Exception:
+        print("  Tableau pas trouve")
+        return [], None
+
+    # Choisir le bon tableau selon le gender
+    titre_cherche = "POINTURES HOMME" if gender == "Homme" else "POINTURES FEMME"
+    print(f"  Lecture tableau : {titre_cherche}")
+
+    # Trouver tous les tableaux dans le premier slide (slide01)
+    tableaux = page.query_selector_all("#splide05-slide01 .size-guide__table")
+    tableau_cible = None
+
+    for tableau in tableaux:
+        try:
+            header = tableau.query_selector(".size-guide__table-cell.is--header")
+            if header:
+                header_text = header.inner_text().strip().upper()
+                if titre_cherche in header_text:
+                    tableau_cible = tableau
+                    break
+        except Exception:
+            continue
+
+    # Fallback : prendre tous les tableaux de la page
+    if not tableau_cible:
+        tous_tableaux = page.query_selector_all(".size-guide__table")
+        for tableau in tous_tableaux:
+            try:
+                header = tableau.query_selector(".size-guide__table-cell.is--header")
+                if header:
+                    header_text = header.inner_text().strip().upper()
+                    if titre_cherche in header_text:
+                        tableau_cible = tableau
+                        break
+            except Exception:
+                continue
+
+    if not tableau_cible:
+        print("  Tableau cible introuvable, on prend le premier")
+        tous = page.query_selector_all(".size-guide__table")
+        tableau_cible = tous[0] if tous else None
+
+    if not tableau_cible:
+        return [], None
+
+    # Lire les colonnes (chaque colonne = une taille)
+    # Structure : table-left contient [vide, FR, UK, US, IT]
+    #             table-right-col contient [CM, FR_val, UK_val, US_val, IT_val]
+    colonnes = tableau_cible.query_selector_all(".size-guide__table-right-col")
+    lignes = []
+
+    for col in colonnes:
+        cells = col.query_selector_all(".size-guide__table-cell")
+        valeurs = [c.inner_text().strip().replace("cm", "").strip() for c in cells]
+        # valeurs = [CM, FR, UK, US, IT]
+        if len(valeurs) >= 5:
+            cm_val = valeurs[0].replace(",", ".") if valeurs[0] else None
+            fr_val = valeurs[1].replace(",", ".") if valeurs[1] else None
+            uk_val = valeurs[2].replace(",", ".") if valeurs[2] else None
+            us_val = valeurs[3].replace(",", ".") if valeurs[3] else None
+            it_val = valeurs[4].replace(",", ".") if valeurs[4] else None
+            if fr_val and fr_val != "-":
+                lignes.append({
+                    "taille_marque": fr_val,
+                    "taille_eu":     fr_val,
+                    "taille_uk":     uk_val,
+                    "taille_us":     us_val,
+                    "taille_it":     it_val,
+                    "longueur_cm":   cm_val,
+                })
+
+    return lignes, "La Bottega Gardiane"
 
 # ─────────────────────────────────────────────
 # Export Excel format horizontal
@@ -210,7 +280,6 @@ def exporter_vers_excel(lignes, url, brand, guide_id):
     wb = load_workbook(EXCEL_FILE)
     if "Guides de taille" not in wb.sheetnames:
         wb.create_sheet("Guides de taille")
-
     ws = wb["Guides de taille"]
 
     next_row = 1
@@ -239,7 +308,7 @@ def exporter_vers_excel(lignes, url, brand, guide_id):
     ws.cell(row=next_row, column=3).alignment = center
     ws.cell(row=next_row, column=4, value=url).font = norm_font
 
-    # Ligne 3 : headers Taille 1, Taille 2...
+    # Ligne 3 : headers
     row_h = next_row + 2
     ws.cell(row=row_h, column=1, value="Systemes metriques").font = white_font
     ws.cell(row=row_h, column=1).fill = dark_fill
@@ -252,13 +321,17 @@ def exporter_vers_excel(lignes, url, brand, guide_id):
         cell.alignment = center
         ws.column_dimensions[get_column_letter(i + 3)].width = 10
 
-    # Lignes de donnees
+    # Determiner les lignes de donnees selon la brand
+    has_it = any(l.get("taille_it") for l in lignes)
     rows_data = [
         (brand,         brand, "taille_marque"),
         ("Europe",      "EU",  "taille_eu"),
         ("Royaume-Uni", "UK",  "taille_uk"),
         ("Etats-Unis",  "US",  "taille_us"),
     ]
+    if has_it:
+        rows_data.append(("Italie", "IT", "taille_it"))
+
     for offset, (label, short, key) in enumerate(rows_data, 1):
         r = row_h + offset
         ws.cell(row=r, column=1, value=label).font = norm_font
@@ -272,7 +345,7 @@ def exporter_vers_excel(lignes, url, brand, guide_id):
             cell.alignment = center
 
     # Longueur pied
-    r_cm = row_h + 5
+    r_cm = row_h + len(rows_data) + 1
     ws.cell(row=r_cm, column=1, value="Longueur pied").font = norm_font
     ws.cell(row=r_cm, column=1).alignment = center
     for i, ligne in enumerate(lignes):
@@ -281,13 +354,12 @@ def exporter_vers_excel(lignes, url, brand, guide_id):
         cell.font = norm_font
         cell.alignment = center
 
-    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["A"].width = 20
     ws.column_dimensions["B"].width = 16
     ws.column_dimensions["C"].width = 50
 
     wb.save(EXCEL_FILE)
     print(f"\n  {len(lignes)} tailles exportees dans '{EXCEL_FILE}' (ID guide = {guide_id})")
-    return guide_id
 
 # ─────────────────────────────────────────────
 # Programme principal
@@ -320,43 +392,53 @@ def scrape_guide_taille(url, gender="Homme"):
             lignes, brand = scraper_guide_prada(page)
         elif "kleman" in url:
             lignes, brand = scraper_guide_kleman(page, gender)
+        elif "labottegardiane" in url or "bottega" in url:
+            lignes, brand = scraper_guide_gardiane(page, gender)
         else:
-            print("  Site non supporte pour l'instant (Prada et Kleman supportes)")
+            print("  Site non supporte (Prada, Kleman, La Bottega Gardiane supportes)")
             lignes, brand = [], None
 
         browser.close()
-
     return lignes, brand
 
-def afficher_resultats(lignes):
+def afficher_resultats(lignes, brand):
     if not lignes:
         print("\n Aucun guide de taille trouve\n")
         return
-    print(f"\n {len(lignes)} tailles trouvees :")
-    print("=" * 70)
-    print(f"  {'Marque':<12} {'EU':<8} {'UK':<10} {'US':<10} {'cm':<10}")
-    print("-" * 70)
+    has_it = any(l.get("taille_it") for l in lignes)
+    print(f"\n {len(lignes)} tailles trouvees ({brand}) :")
+    print("=" * 75)
+    if has_it:
+        print(f"  {'Marque':<10} {'EU/FR':<8} {'UK':<8} {'US':<8} {'IT':<8} {'cm':<8}")
+    else:
+        print(f"  {'Marque':<10} {'EU':<8} {'UK':<10} {'US':<10} {'cm':<10}")
+    print("-" * 75)
     for l in lignes:
-        print(f"  {str(l['taille_marque']):<12} {str(l['taille_eu'] or '-'):<8} {str(l['taille_uk'] or '-'):<10} {str(l['taille_us'] or '-'):<10} {str(l['longueur_cm'] or '-'):<10}")
-    print("=" * 70 + "\n")
+        if has_it:
+            print(f"  {str(l['taille_marque']):<10} {str(l['taille_eu'] or '-'):<8} {str(l['taille_uk'] or '-'):<8} {str(l['taille_us'] or '-'):<8} {str(l['taille_it'] or '-'):<8} {str(l['longueur_cm'] or '-'):<8}")
+        else:
+            print(f"  {str(l['taille_marque']):<10} {str(l['taille_eu'] or '-'):<8} {str(l['taille_uk'] or '-'):<10} {str(l['taille_us'] or '-'):<10} {str(l['longueur_cm'] or '-'):<10}")
+    print("=" * 75 + "\n")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("\nErreur : fournis une URL en argument.")
-        print("Usage : python scraper_guide_taille.py <URL> [Homme|Femme]\n")
+        print("\nUsage : python scraper_guide_taille.py <URL> [Homme|Femme]")
+        print("Exemples :")
+        print("  python scraper_guide_taille.py https://www.prada.com/...")
+        print("  python scraper_guide_taille.py https://kleman-france.com/... Homme")
+        print("  python scraper_guide_taille.py https://www.labottegardiane.com/... Femme\n")
         sys.exit(1)
 
-    url = sys.argv[1]
+    url    = sys.argv[1]
     gender = sys.argv[2] if len(sys.argv) > 2 else "Homme"
 
     lignes, brand = scrape_guide_taille(url, gender)
-    afficher_resultats(lignes)
+    afficher_resultats(lignes, brand)
 
     if lignes:
         wb = load_workbook(EXCEL_FILE) if os.path.exists(EXCEL_FILE) else None
-        if wb:
-            ws2 = wb["Guides de taille"] if "Guides de taille" in wb.sheetnames else None
-            guide_id = get_prochain_id(ws2) if ws2 else 1
+        if wb and "Guides de taille" in wb.sheetnames:
+            guide_id = get_prochain_id(wb["Guides de taille"])
         else:
             guide_id = 1
         exporter_vers_excel(lignes, url, brand, guide_id)
