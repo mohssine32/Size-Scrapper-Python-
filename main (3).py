@@ -1,5 +1,5 @@
 """
-Programme principal - Scraper complet
+Scraper complet - Produit + Guide de taille
 Supporte : Prada, Kleman, La Bottega Gardiane
 Usage : python main.py <URL> [Homme|Femme]
 """
@@ -60,30 +60,48 @@ def accepter_cookies(page):
     return False
 
 # ─────────────────────────────────────────────
-# Scraper produit (onglet 1)
+# Scraper produit
 # ─────────────────────────────────────────────
-def scraper_produit(page, url):
+def scraper_produit(page, url, gender_arg):
     titre = None
-    try:
-        titre = page.eval_on_selector("h1", "el => el.innerText.trim()")
-    except Exception:
-        pass
+
+    # Selecteurs specifiques par site
+    selecteurs_titre = []
+    if "kleman" in url:
+        selecteurs_titre = ["span.product-header__info__title", "h1"]
+    elif "labottegardiane" in url or "bottega" in url:
+        selecteurs_titre = ["h1.bottom-10", "h1"]
+    elif "prada.com" in url:
+        selecteurs_titre = ["[data-element='product-title']", "h1"]
+    else:
+        selecteurs_titre = ["h1"]
+
+    for selector in selecteurs_titre:
+        try:
+            titre = page.eval_on_selector(selector, "el => el.innerText.trim()")
+            if titre:
+                break
+        except Exception:
+            continue
+
     if not titre:
         titre = page.title().split("|")[0].strip()
 
     page_text = page.inner_text("body") if page.query_selector("body") else ""
 
-    gender = None
-    try:
-        datalayer = page.evaluate("() => JSON.stringify(window.dataLayer)")
-        if datalayer:
-            gender = guess_gender(datalayer)
-    except Exception:
-        pass
+    # Gender : argument > dataLayer > page text
+    gender = gender_arg if gender_arg in ["Homme", "Femme", "Unisexe"] else None
+    if not gender:
+        try:
+            datalayer = page.evaluate("() => JSON.stringify(window.dataLayer)")
+            if datalayer:
+                gender = guess_gender(datalayer)
+        except Exception:
+            pass
     if not gender:
         gender = guess_gender(page_text)
 
-    type_produit = guess_type(page_text)
+    type_produit = guess_type(titre + " " + page_text[:500])
     return {"titre": titre, "gender": gender, "type": type_produit, "url": url}
 
 # ─────────────────────────────────────────────
@@ -102,17 +120,17 @@ def lire_tableau_prada(page):
     return data
 
 def scraper_guide_prada(page):
-    print("  Ouverture du guide de taille Prada...")
+    print("  Ouverture du guide de taille...")
     try:
         page.click("[data-element='size-guide-trigger']", timeout=10000)
         time.sleep(3)
     except Exception:
         print("  Bouton guide introuvable")
-        return [], None
+        return []
     try:
         page.wait_for_selector("table.size-table__table", timeout=8000)
     except Exception:
-        return [], None
+        return []
 
     print("  Lecture EU...")
     data_eu = lire_tableau_prada(page)
@@ -148,13 +166,13 @@ def scraper_guide_prada(page):
             "taille_it":     None,
             "longueur_cm":   cm[i]            if i < len(cm)            else None,
         })
-    return lignes, "Prada"
+    return lignes
 
 # ─────────────────────────────────────────────
 # Scraper KLEMAN
 # ─────────────────────────────────────────────
 def scraper_guide_kleman(page, gender="Homme"):
-    print("  Ouverture du guide de taille Kleman...")
+    print("  Ouverture du guide de taille...")
     try:
         page.click("text=Sélectionner une taille", timeout=8000)
         time.sleep(2)
@@ -165,11 +183,11 @@ def scraper_guide_kleman(page, gender="Homme"):
         time.sleep(2)
     except Exception:
         print("  Lien Guide des tailles introuvable")
-        return [], None
+        return []
     try:
         page.wait_for_selector(".size-guide-table__content__row", timeout=8000)
     except Exception:
-        return [], None
+        return []
 
     titre_tableau = "Pointures Homme" if gender == "Homme" else "Pointures Femmes"
     tableaux = page.query_selector_all(".size-guide-table")
@@ -186,7 +204,7 @@ def scraper_guide_kleman(page, gender="Homme"):
     if not tableau_cible and tableaux:
         tableau_cible = tableaux[0]
     if not tableau_cible:
-        return [], None
+        return []
 
     lignes_html = tableau_cible.query_selector_all(".size-guide-table__content__row")
     lignes = []
@@ -208,41 +226,31 @@ def scraper_guide_kleman(page, gender="Homme"):
                 "taille_it":     None,
                 "longueur_cm":   valeurs[3],
             })
-    return lignes, "Kleman"
+    return lignes
 
 # ─────────────────────────────────────────────
 # Scraper LA BOTTEGA GARDIANE
 # ─────────────────────────────────────────────
 def scraper_guide_gardiane(page, gender="Homme"):
-    print("  Ouverture du guide de taille La Bottega Gardiane...")
+    print("  Ouverture du guide de taille...")
     try:
         page.click("[data-trigger-size-guide]", timeout=10000)
         time.sleep(3)
     except Exception:
         print("  Bouton guide introuvable")
-        return [], None
+        return []
     try:
         page.wait_for_selector(".size-guide__table-right-col", timeout=8000)
     except Exception:
-        return [], None
+        return []
 
     titre_cherche = "POINTURES HOMME" if gender == "Homme" else "POINTURES FEMME"
     print(f"  Lecture tableau : {titre_cherche}")
 
-    tableaux = page.query_selector_all("#splide05-slide01 .size-guide__table")
     tableau_cible = None
-    for tableau in tableaux:
-        try:
-            header = tableau.query_selector(".size-guide__table-cell.is--header")
-            if header and titre_cherche in header.inner_text().strip().upper():
-                tableau_cible = tableau
-                break
-        except Exception:
-            continue
-
-    if not tableau_cible:
-        tous = page.query_selector_all(".size-guide__table")
-        for tableau in tous:
+    for selector in ["#splide05-slide01 .size-guide__table", ".size-guide__table"]:
+        tableaux = page.query_selector_all(selector)
+        for tableau in tableaux:
             try:
                 header = tableau.query_selector(".size-guide__table-cell.is--header")
                 if header and titre_cherche in header.inner_text().strip().upper():
@@ -250,13 +258,15 @@ def scraper_guide_gardiane(page, gender="Homme"):
                     break
             except Exception:
                 continue
+        if tableau_cible:
+            break
 
     if not tableau_cible:
         tous = page.query_selector_all(".size-guide__table")
         tableau_cible = tous[0] if tous else None
 
     if not tableau_cible:
-        return [], None
+        return []
 
     colonnes = tableau_cible.query_selector_all(".size-guide__table-right-col")
     lignes = []
@@ -264,11 +274,11 @@ def scraper_guide_gardiane(page, gender="Homme"):
         cells = col.query_selector_all(".size-guide__table-cell")
         valeurs = [c.inner_text().strip().replace("cm", "").strip() for c in cells]
         if len(valeurs) >= 5:
-            cm_val = valeurs[0].replace(",", ".") if valeurs[0] else None
-            fr_val = valeurs[1].replace(",", ".") if valeurs[1] else None
-            uk_val = valeurs[2].replace(",", ".") if valeurs[2] else None
-            us_val = valeurs[3].replace(",", ".") if valeurs[3] else None
-            it_val = valeurs[4].replace(",", ".") if valeurs[4] else None
+            cm_val = valeurs[0].replace(",", ".")
+            fr_val = valeurs[1].replace(",", ".")
+            uk_val = valeurs[2].replace(",", ".")
+            us_val = valeurs[3].replace(",", ".")
+            it_val = valeurs[4].replace(",", ".")
             if fr_val and fr_val != "-":
                 lignes.append({
                     "taille_marque": fr_val,
@@ -278,7 +288,7 @@ def scraper_guide_gardiane(page, gender="Homme"):
                     "taille_it":     it_val,
                     "longueur_cm":   cm_val,
                 })
-    return lignes, "La Bottega Gardiane"
+    return lignes
 
 # ─────────────────────────────────────────────
 # Excel
@@ -304,28 +314,27 @@ def initialiser_excel():
     wb.save(EXCEL_FILE)
     print(f"  Fichier '{EXCEL_FILE}' cree !")
 
-def ajouter_onglet1(produit, guide_id):
-    wb = load_workbook(EXCEL_FILE)
-    ws = wb["Pages produit"]
-    next_row = ws.max_row + 1
-    fill = PatternFill("solid", start_color="D6E4F0" if next_row % 2 == 0 else "FFFFFF")
-    normal_font = Font(name="Arial", size=10)
-    center = Alignment(horizontal="center", vertical="center")
-    valeurs = [produit["titre"], produit["gender"], produit["type"], produit["url"], guide_id]
-    for col, val in enumerate(valeurs, 1):
-        cell = ws.cell(row=next_row, column=col, value=val)
-        cell.font = normal_font
-        cell.fill = fill
-        cell.alignment = center if col in [2, 3, 5] else Alignment(vertical="center")
-    wb.save(EXCEL_FILE)
-    print(f"  Onglet 1 mis a jour (ligne {next_row})")
-
 def get_prochain_id(ws):
     max_id = 0
     for row in ws.iter_rows(min_row=1, values_only=True):
         if row[0] == "Guide de taille" and row[1] and isinstance(row[1], int):
             max_id = max(max_id, row[1])
     return max_id + 1
+
+def ajouter_onglet1(produit, guide_id):
+    wb = load_workbook(EXCEL_FILE)
+    ws = wb["Pages produit"]
+    next_row = ws.max_row + 1
+    fill = PatternFill("solid", start_color="D6E4F0" if next_row % 2 == 0 else "FFFFFF")
+    norm = Font(name="Arial", size=10)
+    center = Alignment(horizontal="center", vertical="center")
+    for col, val in enumerate([produit["titre"], produit["gender"], produit["type"], produit["url"], guide_id], 1):
+        cell = ws.cell(row=next_row, column=col, value=val)
+        cell.font = norm
+        cell.fill = fill
+        cell.alignment = center if col in [2, 3, 5] else Alignment(vertical="center")
+    wb.save(EXCEL_FILE)
+    print(f"  Onglet 1 mis a jour (ligne {next_row})")
 
 def ajouter_onglet2(lignes, url, brand, guide_id):
     wb = load_workbook(EXCEL_FILE)
@@ -346,6 +355,7 @@ def ajouter_onglet2(lignes, url, brand, guide_id):
     bold_font  = Font(bold=True, name="Arial", size=10)
     norm_font  = Font(name="Arial", size=10)
 
+    # Ligne 1
     ws.cell(row=next_row, column=1, value="Guide de taille").font = white_font
     ws.cell(row=next_row, column=1).fill = dark_fill
     ws.cell(row=next_row, column=1).alignment = center
@@ -356,6 +366,7 @@ def ajouter_onglet2(lignes, url, brand, guide_id):
     ws.cell(row=next_row, column=3).alignment = center
     ws.cell(row=next_row, column=4, value=url).font = norm_font
 
+    # Ligne headers
     row_h = next_row + 2
     ws.cell(row=row_h, column=1, value="Systemes metriques").font = white_font
     ws.cell(row=row_h, column=1).fill = dark_fill
@@ -370,10 +381,10 @@ def ajouter_onglet2(lignes, url, brand, guide_id):
 
     has_it = any(l.get("taille_it") for l in lignes)
     rows_data = [
-        (brand,         brand, "taille_marque"),
-        ("Europe",      "EU",  "taille_eu"),
-        ("Royaume-Uni", "UK",  "taille_uk"),
-        ("Etats-Unis",  "US",  "taille_us"),
+        (brand, brand, "taille_marque"),
+        ("Europe", "EU", "taille_eu"),
+        ("Royaume-Uni", "UK", "taille_uk"),
+        ("Etats-Unis", "US", "taille_us"),
     ]
     if has_it:
         rows_data.append(("Italie", "IT", "taille_it"))
@@ -402,14 +413,13 @@ def ajouter_onglet2(lignes, url, brand, guide_id):
     ws.column_dimensions["A"].width = 20
     ws.column_dimensions["B"].width = 16
     ws.column_dimensions["C"].width = 50
-
     wb.save(EXCEL_FILE)
     print(f"  Onglet 2 mis a jour (ID guide = {guide_id})")
 
 # ─────────────────────────────────────────────
-# Programme principal
+# MAIN
 # ─────────────────────────────────────────────
-def main(url, gender="Homme"):
+def main(url, gender_arg="Homme"):
     initialiser_excel()
 
     with sync_playwright() as p:
@@ -428,68 +438,77 @@ def main(url, gender="Homme"):
             window.chrome = { runtime: {} };
         """)
 
-        print(f"\n Chargement de la page...")
+        print(f"\n{'='*50}")
+        print(f" Chargement : {url[:60]}...")
+        print(f"{'='*50}")
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        print(" Attente du chargement JavaScript...")
         time.sleep(4)
         accepter_cookies(page)
         time.sleep(2)
 
-        # Scraper produit
-        print("\n Scraping du produit...")
-        produit = scraper_produit(page, url)
+        # ── Etape 1 : Produit ──────────────────────────────
+        print("\n[1/2] Scraping du produit...")
+        produit = scraper_produit(page, url, gender_arg)
         print(f"  Titre  : {produit['titre']}")
         print(f"  Gender : {produit['gender']}")
         print(f"  Type   : {produit['type']}")
 
-        # Scraper guide selon le site
-        print("\n Scraping du guide de taille...")
+        # ── Etape 2 : Guide de taille ──────────────────────
+        print("\n[2/2] Scraping du guide de taille...")
+        gender = produit["gender"] or gender_arg
+
         if "prada.com" in url:
-            lignes, brand = scraper_guide_prada(page)
+            lignes = scraper_guide_prada(page)
+            brand  = "Prada"
         elif "kleman" in url:
-            lignes, brand = scraper_guide_kleman(page, gender)
+            lignes = scraper_guide_kleman(page, gender)
+            brand  = "Kleman"
         elif "labottegardiane" in url or "bottega" in url:
-            lignes, brand = scraper_guide_gardiane(page, gender)
+            lignes = scraper_guide_gardiane(page, gender)
+            brand  = "La Bottega Gardiane"
         else:
             print("  Site non supporte (Prada, Kleman, La Bottega Gardiane supportes)")
-            lignes, brand = [], None
+            lignes = []
+            brand  = None
 
+        print(f"  {len(lignes)} tailles trouvees")
         browser.close()
 
-    # ID du guide
+    # ── Export Excel ───────────────────────────────────────
     wb = load_workbook(EXCEL_FILE)
-    ws2 = wb["Guides de taille"]
-    guide_id = get_prochain_id(ws2) if lignes else None
+    guide_id = get_prochain_id(wb["Guides de taille"]) if lignes else None
 
-    # Export Excel
     print("\n Export vers Excel...")
     ajouter_onglet1(produit, guide_id)
     if lignes:
         ajouter_onglet2(lignes, url, brand, guide_id)
 
-    print(f"\n Termine ! Ouvre '{EXCEL_FILE}' pour voir le resultat.")
+    print(f"\n{'='*50}")
+    print(f" TERMINE !")
     print(f"  Produit  : {produit['titre']}")
     print(f"  Brand    : {brand or 'Non detecte'}")
     print(f"  Guide ID : {guide_id or 'Aucun'}")
-    print(f"  Tailles  : {len(lignes)}\n")
+    print(f"  Tailles  : {len(lignes)}")
+    print(f"  Fichier  : {EXCEL_FILE}")
+    print(f"{'='*50}\n")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("\nUsage : python main.py <URL> [Homme|Femme]")
-        print("Exemples :")
-        print("  python main.py https://www.prada.com/...")
-        print("  python main.py https://kleman-france.com/... Homme")
-        print("  python main.py https://www.labottegardiane.com/... Femme\n")
+        print("\nExemples :")
+        print("  python main.py https://www.prada.com/fr/fr/p/baskets-speedrock.../...")
+        print("  python main.py https://kleman-france.com/products/padror-th-cognac Homme")
+        print("  python main.py https://www.labottegardiane.com/products/... Femme\n")
         sys.exit(1)
 
-    url    = sys.argv[1]
-    gender = sys.argv[2] if len(sys.argv) > 2 else "Homme"
+    url        = sys.argv[1]
+    gender_arg = sys.argv[2] if len(sys.argv) > 2 else "Homme"
 
     if not url.startswith("http"):
         print("\nErreur : l'URL doit commencer par http://\n")
         sys.exit(1)
     try:
-        main(url, gender)
+        main(url, gender_arg)
     except Exception as e:
         print(f"\nErreur : {e}\n")
-        sys.exit(1)
+        raise
